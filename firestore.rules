@@ -1,0 +1,47 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function myRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+    function isAdmin() { return signedIn() && myRole() == 'admin'; }
+    function isStaff() { return signedIn() && (myRole() == 'petugas' || myRole() == 'admin'); }
+
+    // Data pasien hanya dapat dibaca pemiliknya serta petugas atau admin
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isStaff());
+      allow create: if signedIn() &&
+        ((request.auth.uid == uid && request.resource.data.role == 'pasien') || isAdmin());
+      allow update: if signedIn() &&
+        ((request.auth.uid == uid && request.resource.data.role == resource.data.role) || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    // Data master: semua pengguna login boleh membaca, hanya admin yang mengubah
+    match /poli/{id}       { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /dokter/{id}     { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /pengumuman/{id} { allow read: if signedIn(); allow write: if isAdmin(); }
+
+    // Jadwal: pasien boleh menaikkan "terpakai" saat mengambil nomor (transaction)
+    match /jadwal/{id} {
+      allow read: if signedIn();
+      allow create, delete: if isAdmin();
+      allow update: if isStaff() ||
+        (signedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['terpakai']));
+    }
+
+    match /antrean/{id} {
+      allow read: if signedIn() && (resource.data.uid == request.auth.uid || isStaff());
+      allow create: if signedIn() && (request.resource.data.uid == request.auth.uid || isStaff());
+      allow update: if signedIn() && (resource.data.uid == request.auth.uid || isStaff());
+      allow delete: if isAdmin();
+    }
+
+    match /notifikasi/{id} {
+      allow read, update: if signedIn() && (resource.data.uid == request.auth.uid || isStaff());
+      allow create: if signedIn();
+    }
+  }
+}
